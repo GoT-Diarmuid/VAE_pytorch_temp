@@ -7,33 +7,35 @@ import random
 from copy import deepcopy
 
 from utils import get_data, ndcg, recall
-from model import VAE
-"""
-import argparse
-parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str)
-parser.add_argument('--hidden-dim', type=int, default=600)
-parser.add_argument('--latent-dim', type=int, default=200)
-parser.add_argument('--batch-size', type=int, default=500)
-parser.add_argument('--beta', type=float, default=None)
-parser.add_argument('--gamma', type=float, default=0.005)
-parser.add_argument('--lr', type=float, default=5e-4)
-parser.add_argument('--n-epochs', type=int, default=50)
-parser.add_argument('--n-enc_epochs', type=int, default=3)
-parser.add_argument('--n-dec_epochs', type=int, default=1)
-parser.add_argument('--not-alternating', type=bool, default=False)
-args = parser.parse_args()
-"""
+from model_try import VAE
+
 seed = 1337
 random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-device = torch.device("cuda:0")
+hidden_dim = 600
+latent_dim = 200
+batch_size = 500
+beta = None
+gamma = 0.005
+lr = 5e-4
+n_epochs = 10
+enc_epochs = 3
+dec_epochs = 1
+not_alternating = False
 
-data = get_data(args.dataset)
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0")
+#device = torch.device("cpu")
+
+data = get_data('dataset/Ori')
 train_data, valid_in_data, valid_out_data, test_in_data, test_out_data = data
 
+new_train = 
+for i in range(len(train_data)):
+    if len(train_data.iloc[i][0]) > max:
+        max = len(train_data.iloc[i][0])
 
 def generate(batch_size, device, data_in, data_out=None, shuffle=False, samples_perc_per_epoch=1):
     assert 0 < samples_perc_per_epoch <= 1
@@ -53,7 +55,6 @@ def generate(batch_size, device, data_in, data_out=None, shuffle=False, samples_
         idx = idxlist[st_idx:end_idx]
 
         yield Batch(device, idx, data_in, data_out)
-
 
 class Batch:
     def __init__(self, device, idx, data_in, data_out=None):
@@ -76,7 +77,6 @@ class Batch:
         return torch.Tensor(
             self.get_ratings(is_out).toarray()
         ).to(self._device)
-
 
 def evaluate(model, data_in, data_out, metrics, samples_perc_per_epoch=1, batch_size=500):
     metrics = deepcopy(metrics)
@@ -108,7 +108,6 @@ def evaluate(model, data_in, data_out, metrics, samples_perc_per_epoch=1, batch_
         
     return [x['score'] for x in metrics]
 
-
 def run(model, opts, train_data, batch_size, n_epochs, beta, gamma, dropout_rate):
     model.train()
     for epoch in range(n_epochs):
@@ -118,16 +117,15 @@ def run(model, opts, train_data, batch_size, n_epochs, beta, gamma, dropout_rate
             for optimizer in opts:
                 optimizer.zero_grad()
                 
-            _, loss = model(ratings, beta=beta, gamma=gamma, dropout_rate=dropout_rate)
+            loss = model(ratings, beta=beta, gamma=gamma, dropout_rate=dropout_rate)
             loss.backward()
             
             for optimizer in opts:
                 optimizer.step()
 
-
 model_kwargs = {
-    'hidden_dim': args.hidden_dim,
-    'latent_dim': args.latent_dim,
+    'hidden_dim': hidden_dim,
+    'latent_dim': latent_dim,
     'input_dim': train_data.shape[1]
 }
 metrics = [{'metric': ndcg, 'k': 100}]
@@ -141,26 +139,27 @@ model_best = VAE(**model_kwargs).to(device)
 learning_kwargs = {
     'model': model,
     'train_data': train_data,
-    'batch_size': args.batch_size,
-    'beta': args.beta,
-    'gamma': args.gamma
+    'batch_size': batch_size,
+    'gamma': gamma,
 }
 
 decoder_params = set(model.decoder.parameters())
+tecoder_params = set(model.tecoder.parameters())
 encoder_params = set(model.encoder.parameters())
 
-optimizer_encoder = optim.Adam(encoder_params, lr=args.lr)
-optimizer_decoder = optim.Adam(decoder_params, lr=args.lr)
+optimizer_encoder = optim.Adam(encoder_params, lr=lr)
+optimizer_decoder = optim.Adam(decoder_params, lr=lr)
+optimizer_tecoder = optim.Adam(tecoder_params, lr=lr)
 
+for epoch in range(n_epochs):
 
-for epoch in range(args.n_epochs):
-
-    if args.not_alternating:
+    if not_alternating:
         run(opts=[optimizer_encoder, optimizer_decoder], n_epochs=1, dropout_rate=0.5, **learning_kwargs)
     else:
-        run(opts=[optimizer_encoder], n_epochs=args.n_enc_epochs, dropout_rate=0.5, **learning_kwargs)
+        run(opts=[optimizer_encoder], n_epochs=enc_epochs, dropout_rate=0.5, beta=False, **learning_kwargs)
         model.update_prior()
-        run(opts=[optimizer_decoder], n_epochs=args.n_dec_epochs, dropout_rate=0, **learning_kwargs)
+        run(opts=[optimizer_decoder], n_epochs=dec_epochs, dropout_rate=0, beta=False, **learning_kwargs)
+        run(opts=[optimizer_tecoder], n_epochs=dec_epochs, dropout_rate=0, beta=True, **learning_kwargs)
 
     train_scores.append(
         evaluate(model, train_data, train_data, metrics, 0.01)[0]
@@ -177,12 +176,8 @@ for epoch in range(args.n_epochs):
     print(f'epoch {epoch} | valid ndcg@100: {valid_scores[-1]:.4f} | ' +
           f'best valid: {best_ndcg:.4f} | train ndcg@100: {train_scores[-1]:.4f}')
 
-
-    
 test_metrics = [{'metric': ndcg, 'k': 100}, {'metric': recall, 'k': 20}, {'metric': recall, 'k': 50}]
 
 final_scores = evaluate(model_best, test_in_data, test_out_data, test_metrics)
-
 for metric, score in zip(test_metrics, final_scores):
-    
-    (f"{metric['metric'].__name__}@{metric['k']}:\t{score:.4f}")
+    print(f"{metric['metric'].__name__}@{metric['k']}:\t{score:.4f}")
